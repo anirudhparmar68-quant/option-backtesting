@@ -19,4 +19,14 @@ for d in random.sample(days, 30):
         fast = sf.entry_pnl(d, dict(sl=sl, cost=1.0, max_re=mr)).sum()
         worst = max(worst, abs(ref - fast))
         assert abs(ref - fast) < 1, (d["index"], d["day"], sl, mr, ref, fast)
+    # conservative fills and slippage
+    st.SL_PCT = 0.2
+    for fill, ticks in (("close", 0), ("close", 1), ("sl", 1)):
+        st.SL_FILL = fill
+        ref = sum(t["net"] for m in range(st.mi("09:20"), st.mi("13:00") + 1)
+                  for t in st.simulate_entry(book, d["index"], m, ticks * st.TICK, None, d["X"], 1))
+        fast = sf.entry_pnl(d, dict(sl=0.2, cost=1.0, max_re=1, fill=fill, slip=ticks)).sum()
+        worst = max(worst, abs(ref - fast))
+        assert abs(ref - fast) < 1, (d["index"], d["day"], fill, ticks, ref, fast)
+    st.SL_FILL = "sl"
 print("ok, max |diff| =", round(worst, 4))
