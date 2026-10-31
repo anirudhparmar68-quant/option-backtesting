@@ -189,7 +189,7 @@ def main():
     all_trades = []
     for index in ("NIFTY", "SENSEX"):
         expiries = [r[0] for r in db.execute(
-            "SELECT DISTINCT expiry FROM contracts WHERE underlying=? AND candles_done=1"
+            "SELECT DISTINCT expiry FROM contracts WHERE underlying=? AND n_candles IS NOT NULL"
             " ORDER BY expiry", (index,))]
         days = [r[0] for r in db.execute(
             "SELECT DISTINCT date(o.ts,'unixepoch','+330 minutes') FROM option_candles o"

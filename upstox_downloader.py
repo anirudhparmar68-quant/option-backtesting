@@ -149,10 +149,15 @@ class Upstox:
         return data.get("candles") or []
 
     def index_candles(self, instrument_key, frm, to):
+        """1-minute candles for any live instrument (index or active option)."""
         path = (f"/v3/historical-candle/{quote(instrument_key, safe='')}"
                 f"/minutes/1/{to}/{frm}")
         data = self.get(path) or {}
         return data.get("candles") or []
+
+    def active_option_contracts(self, underlying_key, expiry):
+        return self.get("/v2/option/contract",
+                        {"instrument_key": underlying_key, "expiry_date": expiry}) or []
 
 
 SCHEMA = """
@@ -220,13 +225,13 @@ def download_contract(api, db, cid, key, expiry, max_days):
     return total
 
 
-def sync_contracts(api, db, name, ukey, expiry):
+def sync_contracts(api, db, name, ukey, expiry, fetch=None):
     done = db.execute("SELECT contracts_done FROM expiries WHERE underlying=? AND expiry=?",
                       (name, expiry)).fetchone()
     if done and done[0]:
         return
     rows = []
-    for c in api.option_contracts(ukey, expiry):
+    for c in (fetch or api.option_contracts)(ukey, expiry):
         rows.append((c["instrument_key"], name, expiry, c.get("strike_price"),
                      c.get("instrument_type"), c.get("trading_symbol"),
                      c.get("lot_size"), str(c.get("exchange_token", ""))))
@@ -237,6 +242,32 @@ def sync_contracts(api, db, name, ukey, expiry):
     db.execute("INSERT OR REPLACE INTO expiries VALUES (?,?,1)", (name, expiry))
     db.commit()
     print(f"  {name} {expiry}: {len(rows)} contracts")
+
+
+def download_active_expiry(api, db, name, ukey, expiry, first):
+    """Not-yet-expired expiry: contracts from the live option-chain API and
+    candles from the normal historical API (max ~1 month per request)."""
+    sync_contracts(api, db, name, ukey, expiry, api.active_option_contracts)
+    last = min(date.fromisoformat(expiry), date.today())
+    todo = db.execute("SELECT id, instrument_key FROM contracts WHERE underlying=?"
+                      " AND expiry=? AND candles_done=0", (name, expiry)).fetchall()
+    print(f"{name} {expiry} (active): {len(todo)} contracts to download")
+    for i, (cid, key) in enumerate(todo, 1):
+        total, frm = 0, first
+        while frm <= last:
+            to = min(frm + timedelta(days=CHUNK_DAYS - 1), last)
+            candles = api.index_candles(key, frm.isoformat(), to.isoformat())
+            db.executemany("INSERT OR REPLACE INTO option_candles VALUES (?,?,?,?,?,?,?,?)",
+                           [(cid, *candle_row(c)) for c in candles])
+            total += len(candles)
+            frm = to + timedelta(days=1)
+        # candles of a live contract keep growing; mark done only once it has expired
+        done = 1 if date.fromisoformat(expiry) < date.today() else 0
+        db.execute("UPDATE contracts SET candles_done=?, n_candles=? WHERE id=?",
+                   (done, total, cid))
+        db.commit()
+        if i % 25 == 0 or i == len(todo):
+            print(f"  [{i}/{len(todo)}] {key}: {total} bars")
 
 
 def download_index(api, db, name, ukey, first, last):
@@ -290,6 +321,9 @@ def main():
     p.add_argument("--per-min", type=int, default=150,
                    help="max requests per minute (default 150; Upstox cap is 500)")
     p.add_argument("--list-expiries", action="store_true")
+    p.add_argument("--active-expiry",
+                   help="YYYY-MM-DD of a not-yet-expired expiry to fetch via the live APIs")
+    p.add_argument("--from-date", help="with --active-expiry: first candle date (YYYY-MM-DD)")
     a = p.parse_args()
 
     token = os.environ.get("UPSTOX_ACCESS_TOKEN")
@@ -300,6 +334,15 @@ def main():
     api = Upstox(token, RateLimiter(a.per_min, state))
 
     db = open_db(a.db)
+
+    if a.active_expiry:
+        frm = date.fromisoformat(a.from_date) if a.from_date else (
+            date.fromisoformat(a.active_expiry) - timedelta(days=a.max_days))
+        for name in a.index or list(INDICES):
+            download_active_expiry(api, db, name, INDICES[name], a.active_expiry, frm)
+        db.close()
+        print("Done ->", a.db)
+        return
 
     for name in a.index or list(INDICES):
         ukey = INDICES[name]
