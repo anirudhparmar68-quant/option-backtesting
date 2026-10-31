@@ -38,7 +38,7 @@ OPT_CHUNK_DAYS = 365  # expired option candles: a year fits in one request
 class RateLimiter:
     """Stay under Upstox limits: 50/sec, 500/min, 2000/30min (with headroom)."""
 
-    def __init__(self, limits=((1, 20), (60, 400), (1800, 1800))):
+    def __init__(self, limits=((1, 10), (60, 250), (1800, 1500))):
         self.limits = limits
         self.calls = deque()
 
@@ -68,7 +68,7 @@ class Upstox:
         self.rl = RateLimiter()
 
     def get(self, path, params=None):
-        for attempt in range(6):
+        for attempt in range(10):
             self.rl.wait()
             try:
                 r = self.s.get(BASE + path, params=params, timeout=30)
@@ -80,7 +80,8 @@ class Upstox:
             if r.status_code == 200:
                 return r.json().get("data")
             if r.status_code == 429 or r.status_code >= 500:
-                wait = 2 ** attempt * 2
+                # 429 = a longer-window limit hit: back off up to 10 min
+                wait = min(2 ** attempt * 5, 600)
                 print(f"  HTTP {r.status_code}; retry in {wait}s")
                 time.sleep(wait)
                 continue
