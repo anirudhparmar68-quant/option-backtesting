@@ -17,7 +17,9 @@ from optimize_s1 import TEST_QUARTERS, stats
 LOCKS = [None, 25_000, 50_000, 75_000, 100_000, 150_000, 200_000, 300_000]
 VARIANTS = {"rules": {}, "wing7_noRe": dict(wing=0.07, reentry=False)}
 
-out = sys.argv[1] if len(sys.argv) > 1 else "results/s1_lock"
+STOP_DAY = "--stop-day" in sys.argv
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+out = args[0] if args else ("results/s1_daylock" if STOP_DAY else "results/s1_lock")
 os.makedirs(out, exist_ok=True)
 days = s.load_cache()
 names = np.array([d["day"] for d in days])
@@ -28,7 +30,7 @@ for vname, extra in VARIANTS.items():
         p = dict(s.DEFAULT, slip_ticks=slip, **extra)
         mat, nlocks = [], []
         for lk in LOCKS:
-            daily, nl = L.run_all(days, p, lk, wc)
+            daily, nl = L.run_all(days, p, lk, wc, STOP_DAY)
             mat.append([daily[n] for n in names])
             nlocks.append(nl)
         mat = np.array(mat)

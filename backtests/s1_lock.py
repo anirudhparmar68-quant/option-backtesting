@@ -9,6 +9,9 @@
   * LOCK is given for a 65-qty lot and scaled by lot/65 on days with another lot size
     (25 in late 2024, 75 in 2025), so a lock means the same in points across the data.
 
+With stop_day=True the lock fires at most once: everything is squared off and no new
+flies are taken for the rest of that day.
+
 Everything else is S1 (backtests/ironfly_s1.py).
 """
 
@@ -38,8 +41,9 @@ def close_value(d, r, p):
     return pnl, ex
 
 
-def run_day(d, p, lock, wings=None):
-    """Returns (net, n_locks, lock_minutes)."""
+def run_day(d, p, lock, wings=None, stop_day=False):
+    """Returns (net, n_locks, lock_minutes). stop_day=True: the first lock squares off
+    everything and no new flies are taken that day."""
     wings = wings or s.pick_wings(d, p["wing"])
     E = np.arange(s.mi("09:20"), s.mi(p["entry_last"]) + 1)
     first = s.sim_flies(d, E, wings, p)
@@ -79,6 +83,9 @@ def run_day(d, p, lock, wings=None):
                 alive &= ~((par > last_lock) & (par <= m))   # drop members + pending re-entries
                 locks.append(m)
                 last_lock = m
+                if stop_day:
+                    alive[:] = False                         # nothing more today
+                    break
     kept = (killed_at >= 0) | alive
     idx = np.arange(len(Ef))
     t = np.where(killed_at >= 0, killed_at, np.minimum(final_t, X))
@@ -94,11 +101,11 @@ def run_day(d, p, lock, wings=None):
     return net, len(locks), locks
 
 
-def run_all(days, p, lock, wings_cache=None):
+def run_all(days, p, lock, wings_cache=None, stop_day=False):
     daily, nl = {}, 0
     for d in days:
         w = None if wings_cache is None else wings_cache[d["day"]][p["wing"]]
-        net, k, _ = run_day(d, p, lock, w)
+        net, k, _ = run_day(d, p, lock, w, stop_day)
         daily[d["day"]] = net
         nl += k
     return daily, nl
