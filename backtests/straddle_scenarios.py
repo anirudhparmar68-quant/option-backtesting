@@ -1,8 +1,11 @@
 """Execution-realism check for the staggered straddle: the user's rules and the two
 candidate tweaks under SL-price vs close fills and 0 vs 1 tick of slippage.
-Usage: python backtests/straddle_scenarios.py"""
+Gap = index open / previous close - 1 (09:15); with --gap-at-0920 the index price at
+09:20 (open of the 09:20 minute, i.e. known at entry) is used instead of the 09:15 open.
+Usage: python backtests/straddle_scenarios.py [--gap-at-0920]"""
 import collections
 import json
+import sys
 from multiprocessing import Pool
 
 import numpy as np
@@ -38,12 +41,16 @@ def stats(v):
 if __name__ == "__main__":
     days = sf.load()
     bars = json.load(open("data/daily_bars.json"))
+    at920 = "--gap-at-0920" in sys.argv
+    i920 = json.load(open("data/index_0920.json")) if at920 else None
     gap = []
     for d in days:
         b = bars[d["index"]]
         ds = sorted(b)
         k = ds.index(d["day"]) if d["day"] in b else 0
-        gap.append(abs(b[d["day"]]["open"] / b[ds[k - 1]]["close"] - 1) if k else 0.0)
+        now = (i920[d["index"]].get(d["day"], {}).get("open") if at920 else b[d["day"]]["open"]) if k else None
+        gap.append(abs(now / b[ds[k - 1]]["close"] - 1) if now else 0.0)
+    print(f"gap measured at {'09:20' if at920 else '09:15'}; days with |gap| > 1%: {int((gap_arr := np.array(gap) > 0.01).sum())}")
     gap = np.array(gap)
     res = [None] * len(days)
     with Pool(4, initializer=_init) as pool:
@@ -70,4 +77,4 @@ if __name__ == "__main__":
                 f, p, h = out[key]["full"], out[key]["pre"], out[key]["holdout"]
                 print(f"{key:48} FULL net {f['net']:>12,} dd {f['maxdd']:>11,} cal {f['calmar']} | "
                       f"PRE cal {p['calmar']} | HOLD net {h['net']:>11,} cal {h['calmar']} | lossM {out[key]['loss_months']}")
-    json.dump(out, open("results/straddle_search/scenarios.json", "w"), indent=1)
+    json.dump(out, open(f"results/straddle_search/scenarios{'_gap0920' if at920 else ''}.json", "w"), indent=1)
