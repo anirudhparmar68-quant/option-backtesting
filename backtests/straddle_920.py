@@ -228,10 +228,11 @@ def run_straddle(book, m0, m_exit, delta=None):
     return legs, fut, False, None
 
 
-def simulate_entry(book, index, m_entry, slip=0.0, delta=None):
-    m_exit, m_re_last = mi(EXIT_AT), mi(REENTRY_LAST)
+def simulate_entry(book, index, m_entry, slip=0.0, delta=None, m_exit=None, max_reentries=1):
+    m_exit = mi(EXIT_AT) if m_exit is None else m_exit
+    m_re_last = mi(REENTRY_LAST)
     trades, m0 = [], m_entry
-    for attempt in (0, 1):
+    for attempt in range(max_reentries + 1):
         res = run_straddle(book, m0, m_exit, delta)
         if res is None:
             break
@@ -243,7 +244,7 @@ def simulate_entry(book, index, m_entry, slip=0.0, delta=None):
                      synthetic=fut, gross=sell - buy, charges=charges(index, sell, buy))
             l["net"] = l["gross"] - l["charges"]
             trades.append(l)
-        if not both or attempt == 1 or m_next is None or m_next > m_re_last:
+        if not both or attempt == max_reentries or m_next is None or m_next > m_re_last:
             break
         m0 = m_next
     return trades
