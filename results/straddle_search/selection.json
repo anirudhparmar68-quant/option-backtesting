@@ -1,0 +1,80 @@
+{
+ "combos": 98703360,
+ "best": {
+  "fold0": {
+   "score": 22.743114471435547,
+   "config": [
+    0.1,
+    0.9,
+    0
+   ],
+   "step": 1,
+   "set": "BOTH",
+   "window": [
+    "09:20",
+    "09:40"
+   ],
+   "filters": "exp:all gap<0.5% vix<=18 skip:Wed"
+  },
+  "fold1": {
+   "score": 17.121387481689453,
+   "config": [
+    0.25,
+    0.9,
+    3
+   ],
+   "step": 3,
+   "set": "SENSEX",
+   "window": [
+    "10:40",
+    "12:40"
+   ],
+   "filters": "exp:all gap<1% vix<=18 skip:Wed"
+  },
+  "fold2": {
+   "score": 15.649334907531738,
+   "config": [
+    0.1,
+    0.9,
+    0
+   ],
+   "step": 3,
+   "set": "BOTH",
+   "window": [
+    "09:20",
+    "13:00"
+   ],
+   "filters": "exp:all gap<1% vix:any skip:Mon"
+  },
+  "fold3": {
+   "score": 16.85866355895996,
+   "config": [
+    0.1,
+    0.9,
+    0
+   ],
+   "step": 3,
+   "set": "BOTH",
+   "window": [
+    "09:30",
+    "12:10"
+   ],
+   "filters": "exp:all gap<1% vix<=18 skip:Mon"
+  },
+  "final": {
+   "score": 18.767215728759766,
+   "config": [
+    0.15,
+    null,
+    3
+   ],
+   "step": 2,
+   "set": "SENSEX",
+   "window": [
+    "10:30",
+    "12:10"
+   ],
+   "filters": "exp:all gap<0.5% vix<=18 skip:Fri"
+  }
+ }
+}

@@ -1,0 +1,261 @@
+{
+ "combos_searched": 98703360,
+ "folds": [
+  {
+   "test": "2025-07-01..2025-09-30",
+   "chosen": {
+    "score": 22.743114471435547,
+    "config": [
+     0.1,
+     0.9,
+     0
+    ],
+    "step": 1,
+    "set": "BOTH",
+    "window": [
+     "09:20",
+     "09:40"
+    ],
+    "filters": "exp:all gap<0.5% vix<=18 skip:Wed"
+   },
+   "search_oos": {
+    "net": 95905,
+    "maxdd": 31634,
+    "calmar": 3.03,
+    "win_days": 0.347,
+    "active_days": 49,
+    "days": 64
+   },
+   "rules_oos": {
+    "net": 5944883,
+    "maxdd": 1073663,
+    "calmar": 5.54,
+    "win_days": 0.578,
+    "active_days": 64,
+    "days": 64
+   },
+   "ml_threshold": 0.5,
+   "ml_oos": {
+    "net": 5944883,
+    "maxdd": 1073663,
+    "calmar": 5.54,
+    "win_days": 0.578,
+    "active_days": 64,
+    "days": 64
+   }
+  },
+  {
+   "test": "2025-10-01..2025-12-31",
+   "chosen": {
+    "score": 17.121387481689453,
+    "config": [
+     0.25,
+     0.9,
+     3
+    ],
+    "step": 3,
+    "set": "SENSEX",
+    "window": [
+     "10:40",
+     "12:40"
+    ],
+    "filters": "exp:all gap<1% vix<=18 skip:Wed"
+   },
+   "search_oos": {
+    "net": -43255,
+    "maxdd": 265270,
+    "calmar": -0.16,
+    "win_days": 0.51,
+    "active_days": 49,
+    "days": 61
+   },
+   "rules_oos": {
+    "net": 5545988,
+    "maxdd": 1884978,
+    "calmar": 2.94,
+    "win_days": 0.574,
+    "active_days": 61,
+    "days": 61
+   },
+   "ml_threshold": 0.46,
+   "ml_oos": {
+    "net": 4815931,
+    "maxdd": 1896181,
+    "calmar": 2.54,
+    "win_days": 0.596,
+    "active_days": 57,
+    "days": 61
+   }
+  },
+  {
+   "test": "2026-01-01..2026-03-31",
+   "chosen": {
+    "score": 15.649334907531738,
+    "config": [
+     0.1,
+     0.9,
+     0
+    ],
+    "step": 3,
+    "set": "BOTH",
+    "window": [
+     "09:20",
+     "13:00"
+    ],
+    "filters": "exp:all gap<1% vix:any skip:Mon"
+   },
+   "search_oos": {
+    "net": 355378,
+    "maxdd": 222568,
+    "calmar": 1.6,
+    "win_days": 0.488,
+    "active_days": 43,
+    "days": 60
+   },
+   "rules_oos": {
+    "net": 5958907,
+    "maxdd": 3502053,
+    "calmar": 1.7,
+    "win_days": 0.533,
+    "active_days": 60,
+    "days": 60
+   },
+   "ml_threshold": 0.46,
+   "ml_oos": {
+    "net": 5171117,
+    "maxdd": 1713586,
+    "calmar": 3.02,
+    "win_days": 0.548,
+    "active_days": 42,
+    "days": 60
+   }
+  },
+  {
+   "test": "2026-04-01..2026-06-30",
+   "chosen": {
+    "score": 16.85866355895996,
+    "config": [
+     0.1,
+     0.9,
+     0
+    ],
+    "step": 3,
+    "set": "BOTH",
+    "window": [
+     "09:30",
+     "12:10"
+    ],
+    "filters": "exp:all gap<1% vix<=18 skip:Mon"
+   },
+   "search_oos": {
+    "net": 180100,
+    "maxdd": 65789,
+    "calmar": 2.74,
+    "win_days": 0.5,
+    "active_days": 24,
+    "days": 60
+   },
+   "rules_oos": {
+    "net": 7945437,
+    "maxdd": 2179325,
+    "calmar": 3.65,
+    "win_days": 0.617,
+    "active_days": 60,
+    "days": 60
+   },
+   "ml_threshold": 0.5,
+   "ml_oos": {
+    "net": 3943778,
+    "maxdd": 2577922,
+    "calmar": 1.53,
+    "win_days": 0.604,
+    "active_days": 48,
+    "days": 60
+   }
+  }
+ ],
+ "walk_forward_oos": {
+  "search": {
+   "net": 588128,
+   "maxdd": 265270,
+   "calmar": 2.22,
+   "win_days": 0.455,
+   "active_days": 165,
+   "days": 245
+  },
+  "rules": {
+   "net": 25395215,
+   "maxdd": 3502053,
+   "calmar": 7.25,
+   "win_days": 0.576,
+   "active_days": 245,
+   "days": 245
+  },
+  "ml_filter": {
+   "net": 19875708,
+   "maxdd": 2577922,
+   "calmar": 7.71,
+   "win_days": 0.583,
+   "active_days": 211,
+   "days": 245
+  }
+ },
+ "holdout": {
+  "final_choice": {
+   "score": 18.767215728759766,
+   "config": [
+    0.15,
+    null,
+    3
+   ],
+   "step": 2,
+   "set": "SENSEX",
+   "window": [
+    "10:30",
+    "12:10"
+   ],
+   "filters": "exp:all gap<0.5% vix<=18 skip:Fri"
+  },
+  "search": {
+   "net": 1163978,
+   "maxdd": 329778,
+   "calmar": 3.53,
+   "win_days": 0.643,
+   "active_days": 56,
+   "days": 84
+  },
+  "rules": {
+   "net": 13389825,
+   "maxdd": 1363014,
+   "calmar": 9.82,
+   "win_days": 0.643,
+   "active_days": 84,
+   "days": 84
+  },
+  "ml_threshold": 0.46,
+  "ml_filter": {
+   "net": 12157018,
+   "maxdd": 1208783,
+   "calmar": 10.06,
+   "win_days": 0.685,
+   "active_days": 73,
+   "days": 84
+  }
+ },
+ "full_period_rules": {
+  "net": 55496204,
+  "maxdd": 5595505,
+  "calmar": 9.92,
+  "win_days": 0.594,
+  "active_days": 515,
+  "days": 515
+ },
+ "full_period_final_choice_in_sample_view": {
+  "net": 7410767,
+  "maxdd": 329778,
+  "calmar": 22.47,
+  "win_days": 0.645,
+  "active_days": 304,
+  "days": 515
+ }
+}
