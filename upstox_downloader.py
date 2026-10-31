@@ -46,7 +46,7 @@ class RateLimiter:
 
     def __init__(self, per_min=150, state_path="data/.upstox_ratelimit.json"):
         self.limits = ((1, max(1, per_min // 30)), (60, per_min),
-                       (1800, min(1200, per_min * 20)))
+                       (1800, min(1900, per_min * 20)))
         self.path = state_path
         os.makedirs(os.path.dirname(os.path.abspath(state_path)), exist_ok=True)
 
