@@ -203,11 +203,15 @@ def first_true(mask):
 
 def sim_flies(d, E, wings, p):
     """Simulate flies entered at minutes E (array). Returns dict of per-fly arrays."""
-    ce_w, pe_w = wings
     atm = d["atm"][E]
-    cw, pw = ce_w[E], pe_w[E]
-    ok = (atm >= 0) & (cw >= 0) & (pw >= 0)
-    E, atm, cw, pw = E[ok], atm[ok], cw[ok], pw[ok]
+    return sim_legs(d, E, atm, atm, wings[0][E], wings[1][E], p)
+
+
+def sim_legs(d, E, sc, sp, cw, pw, p):
+    """Four-leg position per entry minute: short call sc / short put sp, wings cw / pw
+    (strike indices; -1 = unavailable). Returns dict of per-position arrays."""
+    ok = (sc >= 0) & (sp >= 0) & (cw >= 0) & (pw >= 0)
+    E, sc, sp, cw, pw = E[ok], sc[ok], sp[ok], cw[ok], pw[ok]
     n = len(E)
     if n == 0:
         return None
@@ -215,13 +219,13 @@ def sim_flies(d, E, wings, p):
     px, cl, lot = d["px"], d["close"], d["lot"]
     X = mi("15:35") if d["cas"] else mi("15:20")
 
-    s_ce, s_pe = px[0, atm, E] - slip, px[1, atm, E] - slip          # short sells
+    s_ce, s_pe = px[0, sc, E] - slip, px[1, sp, E] - slip          # short sells
     b_cw, b_pw = px[0, cw, E] + slip, px[1, pw, E] + slip            # wing buys
     Cc, Cp = s_ce - b_cw, s_pe - b_pw
     good = (Cc > 0) & (Cp > 0) & ~np.isnan(Cc) & ~np.isnan(Cp)
 
-    Vc = cl[0, atm, :] - cl[0, cw, :]                                # (n, N_MIN)
-    Vp = cl[1, atm, :] - cl[1, pw, :]
+    Vc = cl[0, sc, :] - cl[0, cw, :]                                 # (n, N_MIN)
+    Vp = cl[1, sp, :] - cl[1, pw, :]
     grid = np.arange(N_MIN)[None, :]
     live = (grid >= E[:, None]) & (grid < X)
     sl = 1 + p["sl"]
@@ -248,9 +252,9 @@ def sim_flies(d, E, wings, p):
         tt_ = np.minimum(t, N_MIN - 1)
         return np.where(timed, px[j, s, X], cl[j, s, tt_])
 
-    bb_ce = exit_px(0, atm, exit_c) + slip        # buy back short
+    bb_ce = exit_px(0, sc, exit_c) + slip         # buy back short
     sw_ce = np.maximum(exit_px(0, cw, exit_c) - slip, 0)
-    bb_pe = exit_px(1, atm, exit_p) + slip
+    bb_pe = exit_px(1, sp, exit_p) + slip
     sw_pe = np.maximum(exit_px(1, pw, exit_p) - slip, 0)
     gross = ((s_ce - bb_ce) + (sw_ce - b_cw) + (s_pe - bb_pe) + (sw_pe - b_pw)) * lot
     chg = (charges(s_ce * lot, bb_ce * lot) + charges(sw_ce * lot, b_cw * lot)
@@ -260,7 +264,7 @@ def sim_flies(d, E, wings, p):
     reenter = both_stopped & (gross < 0) & (second < mi("14:50"))
     reason = np.where(target, "target", np.where(both_stopped, "stops",
                       np.where((exit_c < X) | (exit_p < X), "stop+time", "time")))
-    r = dict(E=E, atm=d["strikes"][atm], cw=d["strikes"][cw], pw=d["strikes"][pw],
+    r = dict(E=E, sc=d["strikes"][sc], sp=d["strikes"][sp], cw=d["strikes"][cw], pw=d["strikes"][pw],
              credit=(Cc + Cp), gross=gross, charges=chg, net=gross - chg,
              exit_c=exit_c, exit_p=exit_p, reason=reason, reenter=reenter & good, good=good)
     return {k: v[good] for k, v in r.items()}
