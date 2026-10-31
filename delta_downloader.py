@@ -13,6 +13,8 @@ the day's index high / low, vol = India VIX day-high x --iv-mult (default 1.25, 
 cushion for skew), time = 09:15 that day to 15:30 on expiry. A strike is kept if at
 some point in the day's range its call delta lies within [min_delta, 1 - min_delta].
 
+SENSEX by default is narrower: only ATM +- 3 strikes (--atm-steps SENSEX=3).
+
 Usage:
   python delta_downloader.py                     # both indices, all expiries
   python delta_downloader.py --index NIFTY --expiry-from 2025-01-01
@@ -74,6 +76,27 @@ def strike_kept(k, days, idx, vix, expiry, min_delta, iv_mult):
     return False
 
 
+def keep_strikes_atm(strikes, days, idx, steps, expiry):
+    """Strikes within `steps` strikes of ATM at any point of those days. ATM is
+    taken off the futures-like price the backtests use (synthetic), so the day's
+    index low..high is widened upward by carry (7%/yr to expiry)."""
+    ks = sorted(strikes)
+    if len(ks) < 2:
+        return set(ks)
+    gap = min(b - a for a, b in zip(ks, ks[1:]))
+    out = {}
+    for d in days:
+        if d not in idx:
+            continue
+        lo = round(idx[d]["low"] / gap) * gap - steps * gap
+        t = (date.fromisoformat(expiry) - date.fromisoformat(d)).days / 365
+        hi = round(idx[d]["high"] * (1 + 0.07 * t) / gap) * gap + steps * gap
+        for k in ks:
+            if lo <= k <= hi:
+                out.setdefault(k, set()).add(d)
+    return out  # {strike: days on which it was within ATM +- steps}
+
+
 def keep_strikes(strikes, days, idx, vix, expiry, a):
     """Strikes inside the delta band, widened by --buffer-pct of spot on each side
     (expiry-day IVs run well above VIX, so the pure VIX band can be too narrow)."""
@@ -112,8 +135,13 @@ def main():
     p.add_argument("--buffer-pct", type=float, default=1.0,
                    help="widen the strike band by this %% of spot on each side")
     p.add_argument("--per-min", type=int, default=150)
+    p.add_argument("--atm-steps", action="append", default=["SENSEX=3"],
+                   help="INDEX=N: for this index keep only ATM +- N strikes instead of the"
+                        " delta band (default SENSEX=3); INDEX=0 turns it off")
     p.add_argument("--plan-only", action="store_true")
     a = p.parse_args()
+    a.atm_steps = {k: int(v) for k, v in (x.split("=") for x in a.atm_steps)}
+    a.atm_steps = {k: v for k, v in a.atm_steps.items() if v > 0}
 
     token = os.environ.get("UPSTOX_ACCESS_TOKEN")
     if not token:
@@ -148,7 +176,11 @@ def main():
             days = windows[e]
             rows = db.execute("SELECT id, instrument_key, strike, candles_done FROM contracts"
                               " WHERE underlying=? AND expiry=?", (name, e)).fetchall()
-            keep = keep_strikes({r[2] for r in rows}, days, idx, vix, e, a)
+            if name in a.atm_steps:
+                keep = keep_strikes_atm({r[2] for r in rows}, days, idx, a.atm_steps[name], e)
+            else:
+                keep = {k: set(days) for k in
+                        keep_strikes({r[2] for r in rows}, days, idx, vix, e, a)}
             todo = [r for r in rows if r[2] in keep and not r[3]]
             plan += len(todo)
             print(f"  {name} {e}: near/next on {len(days)} days, keep {len(keep)} strikes"
@@ -158,9 +190,11 @@ def main():
                 continue
             lo_ts, hi_ts = day_bounds(days)
             for cid, key, k, _ in todo:
-                candles = api.expired_candles(key, days[0], e)
+                # bars are kept only for the days this strike qualified on
+                kdays = keep[k]
+                candles = api.expired_candles(key, min(kdays), e)
                 rows_in = [r for r in (u.candle_row(c) for c in candles)
-                           if lo_ts <= r[0] <= hi_ts and ist_day(r[0]) in days]
+                           if lo_ts <= r[0] <= hi_ts and ist_day(r[0]) in kdays]
                 db.executemany("INSERT OR REPLACE INTO option_candles VALUES (?,?,?,?,?,?,?,?)",
                                [(cid, *r) for r in rows_in])
                 db.execute("UPDATE contracts SET candles_done=1, n_candles=? WHERE id=?",
