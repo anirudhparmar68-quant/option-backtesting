@@ -15,7 +15,8 @@ Rules (per straddle, 1 lot):
     run with next week's expiry (reported separately).
 
 Fills: entry/exit at the minute bar's open (if the bar is missing, the last close).
-SL is hit when the bar's high >= SL; fill at max(SL, bar open) (gap-up fills worse).
+SL is hit when the bar's high >= SL; fill at max(SL, bar open) (gap-up fills worse),
+or more conservatively the trigger bar's close / high (--sl-fill).
 Costs: brokerage 0, statutory charges (see CHARGES), plus --slippage-ticks adverse
 ticks on every fill (sell fills lower, buy fills higher; default 0).
 Prices in the DB are integer paise.
@@ -38,6 +39,7 @@ ENTRY_FIRST, ENTRY_LAST = "09:20", "11:00"
 REENTRY_LAST = "14:50"
 EXIT_AT = "15:35"
 SL_PCT = 0.20
+SL_FILL = "sl"                               # sl | close | high  (see --sl-fill)
 TICK = 0.05                                  # NIFTY / SENSEX option tick size (Rs)
 
 # Statutory charges on option premium turnover (brokerage = 0).
@@ -83,7 +85,7 @@ class DayBook:
         shape = (2, len(self.strikes), N_MIN)
         self.open = np.full(shape, np.nan)
         self.high = np.full(shape, np.nan)
-        close = np.full(shape, np.nan)
+        self.close = close = np.full(shape, np.nan)
         for k, ot, ts, o, h, c in rows:
             j, m = (0 if ot == "CE" else 1), (ts - start) // 60
             self.open[j, pos[k], m] = o / 100
@@ -138,7 +140,13 @@ def run_straddle(book, m0, m_exit):
             h = book.high[j, s, m]
             if not np.isnan(h) and h >= l["sl"]:
                 o = book.open[j, s, m]
-                l["exit"] = max(l["sl"], o) if (not np.isnan(o) and m > m0) else l["sl"]
+                fill = max(l["sl"], o) if (not np.isnan(o) and m > m0) else l["sl"]
+                if SL_FILL == "close":       # SL-M fills where price went that minute
+                    c = book.close[j, s, m]
+                    fill = max(fill, c) if not np.isnan(c) else fill
+                elif SL_FILL == "high":      # worst price of the trigger minute
+                    fill = max(fill, h)
+                l["exit"] = fill
                 l["exit_m"], l["reason"] = m, "SL" if l["sl"] > l["entry"] else "SL@cost"
                 hit_now.append(j)
         if hit_now and len(hit_now) == 1:
@@ -179,9 +187,14 @@ def main():
     ap.add_argument("--db", default="data/upstox_options.db")
     ap.add_argument("--out", default="results/straddle_920")
     ap.add_argument("--month", default="2026-10", help="trade dates to test (YYYY-MM)")
+    ap.add_argument("--sl-fill", choices=["sl", "close", "high"], default="sl",
+                    help="SL fill: sl = SL price (or worse open); close = max(SL, trigger"
+                         " bar close); high = trigger bar high (worst case)")
     ap.add_argument("--slippage-ticks", type=int, default=0,
                     help="adverse ticks per fill, each leg entry and exit (tick = Rs 0.05)")
     a = ap.parse_args()
+    global SL_FILL
+    SL_FILL = a.sl_fill
     db = sqlite3.connect(a.db)
     os.makedirs(a.out, exist_ok=True)
 
