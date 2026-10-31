@@ -1,13 +1,16 @@
-"""Staggered short straddle backtest on Upstox 1-minute data (data/upstox_options.db).
+"""Staggered short straddle / strangle backtest on Upstox 1-minute data (data/upstox_options.db).
 
-Rules (per straddle, 1 lot):
-  * Entries every minute from 09:20 to 11:00 -> 101 independent straddles a day.
-  * Strike = ATM from synthetic future: at the strike where |CE - PE| is smallest,
-    F = K + CE - PE; ATM = listed strike nearest F.
-  * Sell ATM CE + PE. SL on each leg = entry premium * 1.20.
+Rules (per position, 1 lot):
+  * Entries every minute from 09:20 to --entry-last (default 11:00), each independent.
+  * Synthetic future: at the strike where |CE - PE| is smallest, F = K + CE - PE.
+  * Default (straddle): sell the listed strike nearest F, CE + PE.
+    With --delta D (strangle): sell the CE whose delta is closest to +D and the PE
+    whose delta is closest to -D. Delta = Black-76 on F, with each option's own
+    implied vol (from its price), time to expiry = calendar time to 15:30 on expiry day.
+  * SL on each leg = entry premium * 1.20.
   * When one leg's SL hits, the other leg's SL moves to its entry price (cost),
     effective from the next minute.
-  * Both legs stopped -> one re-entry at the next minute (new synthetic ATM),
+  * Both legs stopped -> one re-entry at the next minute (strikes chosen afresh),
     only if that minute is <= 14:50. Re-entry follows the same rules; no further
     re-entry after it.
   * Anything still open is bought back at 15:35.
@@ -25,6 +28,7 @@ Usage: python backtests/straddle_920.py [--db data/upstox_options.db] [--out res
 """
 
 import argparse
+import math
 import os
 import sqlite3
 from collections import defaultdict
@@ -74,7 +78,8 @@ class DayBook:
     """All strikes of one (index, expiry) for one trading day on a 1-minute grid."""
 
     def __init__(self, db, index, expiry, day):
-        start = int(datetime.fromisoformat(day + "T09:15:00").replace(tzinfo=IST).timestamp())
+        self.expiry_ts = datetime.fromisoformat(expiry + "T15:30:00").replace(tzinfo=IST).timestamp()
+        self.start = start = int(datetime.fromisoformat(day + "T09:15:00").replace(tzinfo=IST).timestamp())
         rows = db.execute(
             "SELECT c.strike, c.option_type, o.ts, o.open, o.high, o.close"
             " FROM option_candles o JOIN contracts c ON c.id = o.contract_id"
@@ -118,16 +123,70 @@ class DayBook:
         cand = np.where(ok)[0]
         return int(cand[np.argmin(np.abs(self.strikes[cand] - fut))]), fut
 
+    def delta_strikes(self, m, target):
+        """(CE strike idx, PE strike idx, F) with |delta| closest to target."""
+        _, fut = self.atm(m)
+        if fut is None:
+            return None, None, None
+        t = (self.expiry_ts - (self.start + m * 60)) / (365 * 86400)
+        if t <= 0:
+            return None, None, None
+        picks = []
+        for j, sign in ((0, 1), (1, -1)):
+            px = np.array([self.price(j, s, m) for s in range(len(self.strikes))])
+            d = black76_delta(px, fut, self.strikes, t, call=(j == 0))
+            err = np.abs(d - sign * target)
+            if np.all(np.isnan(err)):
+                return None, None, None
+            picks.append(int(np.nanargmin(err)))
+        return picks[0], picks[1], fut
 
-def run_straddle(book, m0, m_exit):
-    """One straddle from minute m0. Returns (legs, both_stopped, minute_after_last_stop)."""
-    s, fut = book.atm(m0)
-    if s is None:
+
+def _ncdf(x):
+    # Abramowitz-Stegun 7.1.26 (|error| < 1.5e-7), vectorised
+    z = np.abs(x) / math.sqrt(2)
+    tt = 1 / (1 + 0.3275911 * z)
+    y = 1 - (((((1.061405429 * tt - 1.453152027) * tt) + 1.421413741) * tt
+              - 0.284496736) * tt + 0.254829592) * tt * np.exp(-z * z)
+    return 0.5 * (1 + np.sign(x) * y)
+
+
+def black76_delta(price, fut, k, t, call):
+    """Delta from each option's implied vol (bisection). NaN where IV is undefined."""
+    price = np.asarray(price, float)
+    intrinsic = np.maximum(fut - k, 0) if call else np.maximum(k - fut, 0)
+    ok = ~np.isnan(price) & (price > intrinsic + 1e-9) & (price > 0)
+    lo, hi = np.full(k.shape, 1e-4), np.full(k.shape, 5.0)
+    sq = math.sqrt(t)
+    for _ in range(50):
+        vol = (lo + hi) / 2
+        d1 = (np.log(fut / k) + 0.5 * vol ** 2 * t) / (vol * sq)
+        d2 = d1 - vol * sq
+        val = (fut * _ncdf(d1) - k * _ncdf(d2)) if call else (k * _ncdf(-d2) - fut * _ncdf(-d1))
+        high = val > price
+        hi = np.where(high, vol, hi)
+        lo = np.where(high, lo, vol)
+    vol = (lo + hi) / 2
+    d1 = (np.log(fut / k) + 0.5 * vol ** 2 * t) / (vol * sq)
+    delta = _ncdf(d1) if call else _ncdf(d1) - 1
+    return np.where(ok, delta, np.nan)
+
+
+def run_straddle(book, m0, m_exit, delta=None):
+    """One position from minute m0. Returns (legs, fut, both_stopped, minute_after_last_stop)."""
+    if delta is None:
+        s, fut = book.atm(m0)
+        idx = (s, s)
+    else:
+        ce, pe, fut = book.delta_strikes(m0, delta)
+        idx = (ce, pe)
+    if idx[0] is None or idx[1] is None:
         return None
     legs = []
     for j in (0, 1):
+        s = idx[j]
         e = book.price(j, s, m0)
-        legs.append({"type": "CE" if j == 0 else "PE", "strike": float(book.strikes[s]),
+        legs.append({"type": "CE" if j == 0 else "PE", "strike": float(book.strikes[s]), "s": s,
                      "entry": e, "sl": e * (1 + SL_PCT), "exit": None, "exit_m": None,
                      "reason": None})
     if any(np.isnan(l["entry"]) for l in legs):
@@ -137,6 +196,7 @@ def run_straddle(book, m0, m_exit):
         for j, l in enumerate(legs):
             if l["exit"] is not None:
                 continue
+            s = l["s"]
             h = book.high[j, s, m]
             if not np.isnan(h) and h >= l["sl"]:
                 o = book.open[j, s, m]
@@ -157,15 +217,15 @@ def run_straddle(book, m0, m_exit):
             return legs, fut, True, m + 1
     for j, l in enumerate(legs):
         if l["exit"] is None:
-            l["exit"], l["exit_m"], l["reason"] = book.price(j, s, m_exit), m_exit, "time"
+            l["exit"], l["exit_m"], l["reason"] = book.price(j, l["s"], m_exit), m_exit, "time"
     return legs, fut, False, None
 
 
-def simulate_entry(book, index, m_entry, slip=0.0):
+def simulate_entry(book, index, m_entry, slip=0.0, delta=None):
     m_exit, m_re_last = mi(EXIT_AT), mi(REENTRY_LAST)
     trades, m0 = [], m_entry
     for attempt in (0, 1):
-        res = run_straddle(book, m0, m_exit)
+        res = run_straddle(book, m0, m_exit, delta)
         if res is None:
             break
         legs, fut, both, m_next = res
@@ -190,6 +250,9 @@ def main():
     ap.add_argument("--sl-fill", choices=["sl", "close", "high"], default="sl",
                     help="SL fill: sl = SL price (or worse open); close = max(SL, trigger"
                          " bar close); high = trigger bar high (worst case)")
+    ap.add_argument("--delta", type=float,
+                    help="sell CE/PE nearest this |delta| (e.g. 0.15) instead of ATM straddle")
+    ap.add_argument("--entry-last", default=ENTRY_LAST, help="last entry minute HH:MM")
     ap.add_argument("--slippage-ticks", type=int, default=0,
                     help="adverse ticks per fill, each leg entry and exit (tick = Rs 0.05)")
     a = ap.parse_args()
@@ -198,7 +261,7 @@ def main():
     db = sqlite3.connect(a.db)
     os.makedirs(a.out, exist_ok=True)
 
-    entries = range(mi(ENTRY_FIRST), mi(ENTRY_LAST) + 1)
+    entries = range(mi(ENTRY_FIRST), mi(a.entry_last) + 1)
     all_trades = []
     for index in ("NIFTY", "SENSEX"):
         expiries = [r[0] for r in db.execute(
@@ -224,7 +287,7 @@ def main():
                 if not len(book.strikes):
                     continue
                 for m in entries:
-                    for t in simulate_entry(book, index, m, a.slippage_ticks * TICK):
+                    for t in simulate_entry(book, index, m, a.slippage_ticks * TICK, a.delta):
                         t.update(index=index, day=day, expiry=expiry, variant=variant,
                                  slot=hhmm(m))
                         all_trades.append(t)
