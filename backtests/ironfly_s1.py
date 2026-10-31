@@ -211,6 +211,7 @@ def sim_legs(d, E, sc, sp, cw, pw, p):
     """Four-leg position per entry minute: short call sc / short put sp, wings cw / pw
     (strike indices; -1 = unavailable). Returns dict of per-position arrays."""
     ok = (sc >= 0) & (sp >= 0) & (cw >= 0) & (pw >= 0)
+    src = np.flatnonzero(ok)                    # position in the caller's E
     E, sc, sp, cw, pw = E[ok], sc[ok], sp[ok], cw[ok], pw[ok]
     n = len(E)
     if n == 0:
@@ -265,9 +266,11 @@ def sim_legs(d, E, sc, sp, cw, pw, p):
     reason = np.where(target, "target", np.where(both_stopped, "stops",
                       np.where((exit_c < X) | (exit_p < X), "stop+time", "time")))
     r = dict(E=E, sc=d["strikes"][sc], sp=d["strikes"][sp], cw=d["strikes"][cw], pw=d["strikes"][pw],
+             idx=np.stack([sc, sp, cw, pw]), fills=np.stack([s_ce, b_cw, s_pe, b_pw]),
+             exits=np.stack([bb_ce, sw_ce, bb_pe, sw_pe]), X=np.full(n, X), src=src,
              credit=(Cc + Cp), gross=gross, charges=chg, net=gross - chg,
              exit_c=exit_c, exit_p=exit_p, reason=reason, reenter=reenter & good, good=good)
-    return {k: v[good] for k, v in r.items()}
+    return {k: (v[:, good] if v.ndim == 2 else v[good]) for k, v in r.items()}
 
 
 def run_day(d, p, wings_cache=None):
