@@ -198,6 +198,13 @@ def run_straddle(book, m0, m_exit, delta=None):
                 continue
             s = l["s"]
             h = book.high[j, s, m]
+            if SL_FILL == "closebasis":      # SL only if the minute CLOSES at/above SL
+                c = book.close[j, s, m]
+                if not np.isnan(c) and c >= l["sl"]:
+                    l["exit"] = c
+                    l["exit_m"], l["reason"] = m, "SL" if l["sl"] > l["entry"] else "SL@cost"
+                    hit_now.append(j)
+                continue
             if not np.isnan(h) and h >= l["sl"]:
                 o = book.open[j, s, m]
                 fill = max(l["sl"], o) if (not np.isnan(o) and m > m0) else l["sl"]
@@ -247,9 +254,10 @@ def main():
     ap.add_argument("--db", default="data/upstox_options.db")
     ap.add_argument("--out", default="results/straddle_920")
     ap.add_argument("--month", default="2026-10", help="trade dates to test (YYYY-MM)")
-    ap.add_argument("--sl-fill", choices=["sl", "close", "high"], default="sl",
+    ap.add_argument("--sl-fill", choices=["sl", "close", "high", "closebasis"], default="sl",
                     help="SL fill: sl = SL price (or worse open); close = max(SL, trigger"
-                         " bar close); high = trigger bar high (worst case)")
+                         " bar close); high = trigger bar high (worst case); closebasis = SL only"
+                         " when a minute closes >= SL, filled at that close")
     ap.add_argument("--delta", type=float,
                     help="sell CE/PE nearest this |delta| (e.g. 0.15) instead of ATM straddle")
     ap.add_argument("--entry-last", default=ENTRY_LAST, help="last entry minute HH:MM")
