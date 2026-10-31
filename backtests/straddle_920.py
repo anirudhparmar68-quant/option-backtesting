@@ -16,7 +16,8 @@ Rules (per straddle, 1 lot):
 
 Fills: entry/exit at the minute bar's open (if the bar is missing, the last close).
 SL is hit when the bar's high >= SL; fill at max(SL, bar open) (gap-up fills worse).
-Costs: brokerage 0, statutory charges only (see CHARGES). No slippage.
+Costs: brokerage 0, statutory charges (see CHARGES), plus --slippage-ticks adverse
+ticks on every fill (sell fills lower, buy fills higher; default 0).
 Prices in the DB are integer paise.
 
 Usage: python backtests/straddle_920.py [--db data/upstox_options.db] [--out results/straddle_920]
@@ -37,6 +38,7 @@ ENTRY_FIRST, ENTRY_LAST = "09:20", "11:00"
 REENTRY_LAST = "14:50"
 EXIT_AT = "15:35"
 SL_PCT = 0.20
+TICK = 0.05                                  # NIFTY / SENSEX option tick size (Rs)
 
 # Statutory charges on option premium turnover (brokerage = 0).
 CHARGES = {
@@ -151,7 +153,7 @@ def run_straddle(book, m0, m_exit):
     return legs, fut, False, None
 
 
-def simulate_entry(book, index, m_entry):
+def simulate_entry(book, index, m_entry, slip=0.0):
     m_exit, m_re_last = mi(EXIT_AT), mi(REENTRY_LAST)
     trades, m0 = [], m_entry
     for attempt in (0, 1):
@@ -160,7 +162,8 @@ def simulate_entry(book, index, m_entry):
             break
         legs, fut, both, m_next = res
         for l in legs:
-            sell, buy = l["entry"] * book.lot, l["exit"] * book.lot
+            sell = max(l["entry"] - slip, 0) * book.lot
+            buy = (l["exit"] + slip) * book.lot
             l.update(attempt=attempt, entry_time=hhmm(m0), exit_time=hhmm(l["exit_m"]),
                      synthetic=fut, gross=sell - buy, charges=charges(index, sell, buy))
             l["net"] = l["gross"] - l["charges"]
@@ -176,6 +179,8 @@ def main():
     ap.add_argument("--db", default="data/upstox_options.db")
     ap.add_argument("--out", default="results/straddle_920")
     ap.add_argument("--month", default="2026-10", help="trade dates to test (YYYY-MM)")
+    ap.add_argument("--slippage-ticks", type=int, default=0,
+                    help="adverse ticks per fill, each leg entry and exit (tick = Rs 0.05)")
     a = ap.parse_args()
     db = sqlite3.connect(a.db)
     os.makedirs(a.out, exist_ok=True)
@@ -206,7 +211,7 @@ def main():
                 if not len(book.strikes):
                     continue
                 for m in entries:
-                    for t in simulate_entry(book, index, m):
+                    for t in simulate_entry(book, index, m, a.slippage_ticks * TICK):
                         t.update(index=index, day=day, expiry=expiry, variant=variant,
                                  slot=hhmm(m))
                         all_trades.append(t)
