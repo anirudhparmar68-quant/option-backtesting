@@ -1,0 +1,2 @@
+  config 1/128  combos so far 771,120  21s
+  config 2/128  combos so far 1,542,240  45s
