@@ -14,14 +14,15 @@ Usage:
 """
 
 import argparse
+import fcntl
+import json
 import os
+import random
 import shutil
-from datetime import datetime
 import sqlite3
 import sys
 import time
-from collections import deque
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
 import requests
@@ -36,59 +37,102 @@ OPT_CHUNK_DAYS = 365  # expired option candles: a year fits in one request
 
 
 class RateLimiter:
-    """Stay under Upstox limits: 50/sec, 500/min, 2000/30min (with headroom)."""
+    """One rate limiter shared by every request and every running copy.
 
-    def __init__(self, limits=((1, 10), (60, 250), (1800, 1500))):
-        self.limits = limits
-        self.calls = deque()
+    Request times and any 429 cooldown live in a small JSON file guarded by a
+    file lock, so restarts and parallel runs all count against the same budget.
+    Upstox allows 50/sec, 500/min, 2000/30min; defaults stay well below that.
+    """
+
+    def __init__(self, per_min=150, state_path="data/.upstox_ratelimit.json"):
+        self.limits = ((1, max(1, per_min // 30)), (60, per_min),
+                       (1800, min(1200, per_min * 20)))
+        self.path = state_path
+        os.makedirs(os.path.dirname(os.path.abspath(state_path)), exist_ok=True)
+
+    def _locked(self, fn):
+        with open(self.path + ".lock", "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            try:
+                with open(self.path) as f:
+                    st = json.load(f)
+            except (OSError, ValueError):
+                st = {"calls": [], "cooldown_until": 0}
+            out = fn(st, time.time())
+            tmp = self.path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(st, f)
+            os.replace(tmp, self.path)
+            return out
 
     def wait(self):
-        while True:
-            now = time.monotonic()
-            while self.calls and now - self.calls[0] > 1800:
-                self.calls.popleft()
-            sleep_for = 0.0
+        """Block until a request may be sent, then record it."""
+        def step(st, now):
+            st["calls"] = [t for t in st["calls"] if now - t < 1800]
+            sleep_for = st.get("cooldown_until", 0) - now
             for window, cap in self.limits:
-                recent = [t for t in self.calls if now - t < window]
+                recent = [t for t in st["calls"] if now - t < window]
                 if len(recent) >= cap:
-                    sleep_for = max(sleep_for, window - (now - recent[0]) + 0.01)
+                    sleep_for = max(sleep_for, window - (now - recent[-cap]) + 0.05)
             if sleep_for <= 0:
-                self.calls.append(now)
+                st["calls"].append(now)
+            return sleep_for
+
+        while True:
+            sleep_for = self._locked(step)
+            if sleep_for <= 0:
                 return
-            time.sleep(sleep_for)
+            time.sleep(min(sleep_for, 30))
+
+    def cooldown(self, seconds):
+        """Pause all requests (every process) for `seconds`."""
+        def step(st, now):
+            st["cooldown_until"] = max(st.get("cooldown_until", 0), now + seconds)
+        self._locked(step)
+
+
+def backoff(attempt, base=5, cap=600):
+    """Exponential backoff with jitter: ~5s, 10s, 20s ... capped at 10 min."""
+    return min(base * 2 ** attempt, cap) * random.uniform(0.75, 1.25)
 
 
 class Upstox:
-    def __init__(self, token):
-        self.s = requests.Session()
+    MAX_RETRIES = 8
+
+    def __init__(self, token, rate_limiter=None, session=None):
+        self.s = session or requests.Session()
         self.s.headers.update({
             "Accept": "application/json",
             "Authorization": f"Bearer {token}",
         })
-        self.rl = RateLimiter()
+        self.rl = rate_limiter or RateLimiter()
 
     def get(self, path, params=None):
-        for attempt in range(10):
+        for attempt in range(self.MAX_RETRIES + 1):
             self.rl.wait()
             try:
                 r = self.s.get(BASE + path, params=params, timeout=30)
             except requests.RequestException as e:
-                wait = 2 ** attempt
-                print(f"  network error ({e}); retry in {wait}s")
+                wait = backoff(attempt, base=2)
+                print(f"  network error ({type(e).__name__}); retry {attempt + 1} in {wait:.0f}s")
                 time.sleep(wait)
                 continue
             if r.status_code == 200:
                 return r.json().get("data")
-            if r.status_code == 429 or r.status_code >= 500:
-                # 429 = a longer-window limit hit: back off up to 10 min
-                wait = min(2 ** attempt * 5, 600)
-                print(f"  HTTP {r.status_code}; retry in {wait}s")
-                time.sleep(wait)
-                continue
             if r.status_code == 401:
                 sys.exit("401 Unauthorized: token missing/expired. Generate a fresh UPSTOX_ACCESS_TOKEN.")
+            if r.status_code == 429 or r.status_code >= 500:
+                wait = backoff(attempt)
+                retry_after = r.headers.get("Retry-After", "")
+                if retry_after.isdigit():
+                    wait = max(wait, int(retry_after))
+                if r.status_code == 429:
+                    self.rl.cooldown(wait)  # everyone waits, not just this call
+                print(f"  HTTP {r.status_code}; retry {attempt + 1} in {wait:.0f}s")
+                time.sleep(wait)
+                continue
             raise RuntimeError(f"HTTP {r.status_code} on {path}: {r.text[:300]}")
-        raise RuntimeError(f"Giving up on {path} after retries")
+        raise RuntimeError(f"Giving up on {path} after {self.MAX_RETRIES} retries")
 
     def expiries(self, underlying_key):
         return self.get("/v2/expired-instruments/expiries",
@@ -243,15 +287,18 @@ def main():
     p.add_argument("--max-days", type=int, default=365,
                    help="how far before expiry to fetch candles (default 365)")
     p.add_argument("--no-index", action="store_true", help="skip spot index candles")
+    p.add_argument("--per-min", type=int, default=150,
+                   help="max requests per minute (default 150; Upstox cap is 500)")
     p.add_argument("--list-expiries", action="store_true")
     a = p.parse_args()
 
     token = os.environ.get("UPSTOX_ACCESS_TOKEN")
     if not token:
         sys.exit("Set UPSTOX_ACCESS_TOKEN env var first.")
-    api = Upstox(token)
-
     os.makedirs(os.path.dirname(a.db) or ".", exist_ok=True)
+    state = os.path.join(os.path.dirname(a.db) or ".", ".upstox_ratelimit.json")
+    api = Upstox(token, RateLimiter(a.per_min, state))
+
     db = open_db(a.db)
 
     for name in a.index or list(INDICES):
