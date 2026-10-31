@@ -6,6 +6,9 @@ Per entry minute E (independent straddle, 1 lot per leg):
   * Leg SL = entry * (1 + sl). Hit when the minute HIGH >= SL; fill at the SL, or at the
     minute open if it opens above (not on the entry minute) - same as straddle_920 'sl'.
     fill='close': fill at max(that, the trigger minute's close) - straddle_920 'close'.
+    trig='close': a stop triggers only when a minute CLOSES at/over the level and is
+    executed at the next minute's price (open, else last close) - no intra-minute
+    assumption; a re-entry opens at that same next minute.
   * cost: after one leg stops, the other leg's SL becomes cost_mult * its entry
     (1.0 = cost to cost; None = keep its original SL), from the next minute.
   * Both legs stopped -> re-entry at the next minute (new ATM), up to max_re times,
@@ -31,7 +34,7 @@ RE_LAST = st.mi("14:50")
 def _build(job):
     db_path, index, day, expiry = job
     f = os.path.join(CACHE, f"{index}_{day}.npz")
-    if os.path.exists(f) and "close" in np.load(f).files:
+    if os.path.exists(f) and "strikes" in np.load(f).files:
         return f
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     b = st.DayBook(db, index, expiry, day)
@@ -49,6 +52,7 @@ def _build(job):
     x = st.mi("15:35") if (cas and expiry != day) else st.mi("15:15")
     np.savez(f, px=px.astype(np.float32), open=b.open.astype(np.float32),
              high=b.high.astype(np.float32), close=b.close.astype(np.float32), atm=atm, fut=fut,
+             strikes=b.strikes,
              lot=b.lot, X=x,
              expiry_day=expiry == day, dte=(np.datetime64(expiry) - np.datetime64(day)).astype(int))
     return f
@@ -109,6 +113,9 @@ def legs(d, E, p):
     H = np.round(np.stack([hi[0, a, :], hi[1, a, :]]).astype(np.float64), 2)   # (2, n, N)
     O = np.round(np.stack([op[0, a, :], op[1, a, :]]).astype(np.float64), 2)
     sl = e * (1 + p["sl"])
+    close_basis = p.get("trig") == "close"       # judge on minute closes, act next minute
+    if close_basis:
+        H = np.round(np.stack([d["close"][0, a, :], d["close"][1, a, :]]).astype(np.float64), 2)
     t = np.stack([_first(live & (H[j] >= sl[j][:, None])) for j in (0, 1)])
     t1 = t.min(0)
     cm = p.get("cost")
@@ -136,6 +143,8 @@ def legs(d, E, p):
             c = np.round(d["close"][j, a, tt].astype(np.float64), 2)
             f_stop = np.where(np.isnan(c), f_stop, np.maximum(f_stop, c))
         f_time = np.round(px[j, a, X].astype(np.float64), 2)
+        if close_basis:                             # exit at the next minute's price
+            f_stop = np.round(px[j, a, np.minimum(tt + 1, X)].astype(np.float64), 2)
         fill[j] = np.where(stopped, f_stop, f_time)
     lot = d["lot"]
     sell = np.maximum(e - slip, 0) * lot
@@ -143,7 +152,7 @@ def legs(d, E, p):
     gross = (sell - buy).sum(0)
     chg = sum(st.charges(d["index"], sell[j], buy[j]) for j in (0, 1))
     both = (exit_t < X).all(0)
-    nxt = exit_t.max(0) + 1
+    nxt = exit_t.max(0) + 1                           # close-basis: the exit minute itself
     return dict(E=E, gross=np.where(good, gross, 0.0), charges=np.where(good, chg, 0.0),
                 both=both & good, nxt=nxt, src=src)
 
