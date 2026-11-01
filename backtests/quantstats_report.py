@@ -11,7 +11,7 @@ import quantstats as qs
 
 import strangle_100 as s1
 
-CAPITAL = 1e7            # Rs 1 crore notional capital base (assumption; set to your margin)
+CAPITAL = 221 * 1.5e5      # 221 rungs x Rs 1.5 lakh margin per rung (owner's figure) = Rs 3.315 crore
 P = s1.CFG["realistic (close-confirmed, 1 tick)"]
 
 
