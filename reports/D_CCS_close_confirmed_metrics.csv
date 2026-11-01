@@ -1,0 +1,82 @@
+,Benchmark,Strategy
+Start Period,2024-09-27,2024-09-27
+End Period,2026-10-29,2026-10-29
+Risk-Free Rate,0,0
+Time in Market,1.0,1.0
+Cumulative Return,-0.16,0.7
+CAGR﹪,-0.08,0.31
+Sharpe,-0.72,2.44
+Prob. Sharpe Ratio,0.16,1.0
+Smart Sharpe,-0.67,2.28
+Sortino,-0.97,3.77
+Smart Sortino,-0.91,3.52
+Sortino/√2,-0.69,2.66
+Smart Sortino/√2,-0.64,2.49
+Omega,0.89,1.51
+Max Drawdown,-,-0.06
+Max DD Date,-,2025-01-29
+Max DD Period Start,-,2025-01-09
+Max DD Period End,-,2025-01-31
+Longest DD Days,-,-
+Volatility (ann.),0.11,0.11
+R^2,0,0
+Information Ratio,0.14,0.14
+Calmar,-0.46,5.4
+Skew,-0.1,-0.18
+Kurtosis,0.29,2.0
+Ulcer Performance Index,-1.68,46.97
+Risk-Adjusted Return,-0.08,0.32
+Risk-Return Ratio,-0.05,0.15
+Avg. Return,0,0
+Avg. Win,0.01,0.01
+Avg. Loss,-0.01,-0.01
+Win/Loss Ratio,1.0,0.96
+Profit Ratio,1.13,0.61
+Expected Daily,0,0
+Expected Monthly,-0.01,0.02
+Expected Yearly,-0.06,0.19
+Kelly Criterion,-0.06,0.21
+Risk of Ruin,0,0
+Daily Value-at-Risk,-0.01,-0.01
+Expected Shortfall (cVaR),-0.02,-0.01
+Max Consecutive Wins,7.0,11.0
+Max Consecutive Losses,10.0,5.0
+Gain/Pain Ratio,-0.11,0.51
+Gain/Pain (1M),-0.41,10.71
+Payoff Ratio,1.0,0.96
+Profit Factor,0.89,1.51
+Common Sense Ratio,0.74,1.63
+CPC Index,0.42,0.89
+Tail Ratio,0.84,1.08
+Outlier Win Ratio,2.9,3.4
+Outlier Loss Ratio,3.29,3.07
+MTD,0.01,0.06
+3M,-0.04,0.11
+6M,-0.06,0.18
+YTD,-0.13,0.25
+1Y,-0.12,0.3
+3Y (ann.),-0.08,0.31
+5Y (ann.),-0.08,0.31
+10Y (ann.),-0.08,0.31
+All-time (ann.),-0.08,0.31
+Best Day,0.02,0.03
+Worst Day,-0.02,-0.03
+Best Month,0.06,0.06
+Worst Month,-0.06,-0.01
+Best Year,0.06,0.25
+Worst Year,-0.13,0.11
+Avg. Drawdown,-,-0.01
+Avg. Drawdown Days,-,-
+Recovery Factor,0.87,9.36
+Ulcer Index,0.09,0.01
+Serenity Index,-0.08,7.99
+Avg. Up Month,0.03,0.03
+Avg. Down Month,-0.02,-0.01
+Win Days,0.47,0.61
+Win Month,0.35,0.81
+Win Quarter,0.3,1.0
+Win Year,0.33,1.0
+Beta,-,-0.05
+Alpha,-,0.28
+Correlation,-,-0.05%
+Treynor Ratio,-,-14.96%
