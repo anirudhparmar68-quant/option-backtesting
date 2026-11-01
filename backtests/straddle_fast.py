@@ -35,8 +35,8 @@ RE_LAST = st.mi("14:50")
 
 
 def _build(job):
-    db_path, index, day, expiry = job
-    f = os.path.join(CACHE, f"{index}_{day}.npz")
+    db_path, index, day, expiry, nx = job          # nx: expiry day traded in the next expiry
+    f = os.path.join(CACHE, f"{index}_{day}{'_nx' if nx else ''}.npz")
     if os.path.exists(f) and "strikes" in np.load(f).files:
         return f
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -52,7 +52,7 @@ def _build(job):
         if s is not None:
             atm[m], fut[m] = s, F
     cas = not np.isnan(b.high[:, :, st.mi("15:31"):]).all()
-    x = st.mi("15:35") if (cas and expiry != day) else st.mi("15:15")
+    x = st.mi("15:35") if (cas and expiry != day and not nx) else st.mi("15:15")
     np.savez(f, px=px.astype(np.float32), open=b.open.astype(np.float32),
              high=b.high.astype(np.float32), close=b.close.astype(np.float32), atm=atm, fut=fut,
              strikes=b.strikes,
@@ -61,7 +61,8 @@ def _build(job):
     return f
 
 
-def load(db_path="data/upstox_7delta.db", index=None, parallel=True):
+def load(db_path="data/upstox_7delta.db", index=None, parallel=True, next_on_expiry=False):
+    """next_on_expiry: on an index's own expiry day use the NEXT expiry (exit still 15:15)."""
     os.makedirs(CACHE, exist_ok=True)
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     jobs = []
@@ -72,15 +73,18 @@ def load(db_path="data/upstox_7delta.db", index=None, parallel=True):
                                  " option_candles o JOIN contracts c ON c.id=o.contract_id"
                                  " WHERE c.underlying=? ORDER BY 1", (ix,)):
             up = [e for e in exps if e >= day]
+            nx = next_on_expiry and bool(up) and up[0] == day
+            if nx:
+                up = up[1:]
             if up:
-                jobs.append((db_path, ix, day, up[0]))
+                jobs.append((db_path, ix, day, up[0], nx))
     if parallel:
         with Pool(4) as pool:
             files = pool.map(_build, jobs, chunksize=4)
     else:                                   # e.g. inside a pool worker (no nested pools)
         files = [_build(j) for j in jobs]
     days = []
-    for (_, ix, day, expiry), f in zip(jobs, files):
+    for (_, ix, day, expiry, nx), f in zip(jobs, files):
         if f is None:
             continue
         z = np.load(f)
@@ -107,6 +111,19 @@ def attach_spot(days):
     return keep
 
 
+def attach_premium_picks(days, target=100.0):
+    """Per minute, the CE and the PE strike whose price is nearest `target` (-1 if none)."""
+    for d in days:
+        px = d["px"]
+        for j, key in ((0, "pick_ce"), (1, "pick_pe")):
+            dist = np.abs(px[j].astype(np.float64) - target)          # (S, N)
+            dist = np.where(np.isnan(dist), np.inf, dist)
+            idx = dist.argmin(0)
+            idx[~np.isfinite(dist.min(0))] = -1
+            d[key] = idx
+    return days
+
+
 def _first(mask):
     return np.where(mask.any(1), mask.argmax(1), N)
 
@@ -114,10 +131,14 @@ def _first(mask):
 def legs(d, E, p):
     """Simulate straddles entered at minutes E. Returns per-straddle gross, charges,
     both_stopped flag, minute after the last stop."""
-    a = d["atm"][E]
-    ok = a >= 0
+    if p.get("pick") == "premium":               # CE / PE strikes nearest a target premium
+        a0, a1 = d["pick_ce"][E], d["pick_pe"][E]
+    else:
+        a0 = a1 = d["atm"][E]
+    ok = (a0 >= 0) & (a1 >= 0)
     src = np.flatnonzero(ok)                     # positions in the caller's E
-    E, a = E[ok], a[ok].astype(int)
+    E, a0, a1 = E[ok], a0[ok].astype(int), a1[ok].astype(int)
+    A = (a0, a1)
     if not len(E):
         return None
     px, hi, op, X = d["px"], d["high"], d["open"], d["X"]
@@ -125,16 +146,16 @@ def legs(d, E, p):
     # float64 throughout: float32 turns e.g. a 60.00 SL into 60.000004 and misses touches
     # cache is float32: round back to exact paise so e.g. a 162.90 high still touches a
     # 162.90 SL
-    e = np.round(np.stack([px[0, a, E], px[1, a, E]]).astype(np.float64), 2)
+    e = np.round(np.stack([px[0, a0, E], px[1, a1, E]]).astype(np.float64), 2)
     good = ~np.isnan(e).any(0)
     grid = np.arange(N)[None, :]
     live = (grid >= E[:, None]) & (grid < X)
-    H = np.round(np.stack([hi[0, a, :], hi[1, a, :]]).astype(np.float64), 2)   # (2, n, N)
-    O = np.round(np.stack([op[0, a, :], op[1, a, :]]).astype(np.float64), 2)
+    H = np.round(np.stack([hi[0, a0, :], hi[1, a1, :]]).astype(np.float64), 2)   # (2, n, N)
+    O = np.round(np.stack([op[0, a0, :], op[1, a1, :]]).astype(np.float64), 2)
     sl = e * (1 + p["sl"])
     close_basis = p.get("trig") in ("close", "index")   # judge on minute closes, act next minute
     if close_basis:
-        H = np.round(np.stack([d["close"][0, a, :], d["close"][1, a, :]]).astype(np.float64), 2)
+        H = np.round(np.stack([d["close"][0, a0, :], d["close"][1, a1, :]]).astype(np.float64), 2)
     if p.get("trig") == "index":
         # leg stop = underlying index move of p["mv"] from its level at entry (minute open):
         # CE stops when the index CLOSES >= S0*(1+mv), PE when it closes <= S0*(1-mv)
@@ -173,11 +194,11 @@ def legs(d, E, p):
         gap = stopped & (tt > E) & ~np.isnan(o) & (o > stop_px[j])
         f_stop = np.where(gap, o, stop_px[j])
         if p.get("fill", "sl") == "close":          # SL-M lands where the minute closed
-            c = np.round(d["close"][j, a, tt].astype(np.float64), 2)
+            c = np.round(d["close"][j, A[j], tt].astype(np.float64), 2)
             f_stop = np.where(np.isnan(c), f_stop, np.maximum(f_stop, c))
-        f_time = np.round(px[j, a, X].astype(np.float64), 2)
+        f_time = np.round(px[j, A[j], X].astype(np.float64), 2)
         if close_basis:                             # exit at the next minute's price
-            f_stop = np.round(px[j, a, np.minimum(tt + 1, X)].astype(np.float64), 2)
+            f_stop = np.round(px[j, A[j], np.minimum(tt + 1, X)].astype(np.float64), 2)
         fill[j] = np.where(stopped, f_stop, f_time)
     lot = d["lot"]
     sell = np.maximum(e - slip, 0) * lot
