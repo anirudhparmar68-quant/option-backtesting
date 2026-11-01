@@ -6,6 +6,9 @@ Per entry minute E (independent straddle, 1 lot per leg):
   * Leg SL = entry * (1 + sl). Hit when the minute HIGH >= SL; fill at the SL, or at the
     minute open if it opens above (not on the entry minute) - same as straddle_920 'sl'.
     fill='close': fill at max(that, the trigger minute's close) - straddle_920 'close'.
+    trig='index': leg stop on an underlying move of mv (CE up / PE down, index 1-min close),
+    executed next minute; the survivor's cost stop is close-confirmed like trig='close'.
+    Needs d['spot_open'] / d['spot_close'] (attach_spot()).
     trig='close': a stop triggers only when a minute CLOSES at/over the level and is
     executed at the next minute's price (open, else last close) - no intra-minute
     assumption; a re-entry opens at that same next minute.
@@ -88,6 +91,22 @@ def load(db_path="data/upstox_7delta.db", index=None, parallel=True):
     return days
 
 
+def attach_spot(days):
+    """Add the index's 1-minute open/close (data/{nifty,sensex}_index_1min.npz) to each day."""
+    sp = {}
+    for ix in ("NIFTY", "SENSEX"):
+        z = np.load(f"data/{ix.lower()}_index_1min.npz")
+        sp[ix] = {d: oc for d, oc in zip(z["days"], z["oc"])}
+    keep = []
+    for d in days:
+        oc = sp[d["index"]].get(d["day"])
+        if oc is None:
+            continue
+        d["spot_open"], d["spot_close"] = oc[:, 0].astype(float), oc[:, 1].astype(float)
+        keep.append(d)
+    return keep
+
+
 def _first(mask):
     return np.where(mask.any(1), mask.argmax(1), N)
 
@@ -113,10 +132,20 @@ def legs(d, E, p):
     H = np.round(np.stack([hi[0, a, :], hi[1, a, :]]).astype(np.float64), 2)   # (2, n, N)
     O = np.round(np.stack([op[0, a, :], op[1, a, :]]).astype(np.float64), 2)
     sl = e * (1 + p["sl"])
-    close_basis = p.get("trig") == "close"       # judge on minute closes, act next minute
+    close_basis = p.get("trig") in ("close", "index")   # judge on minute closes, act next minute
     if close_basis:
         H = np.round(np.stack([d["close"][0, a, :], d["close"][1, a, :]]).astype(np.float64), 2)
-    t = np.stack([_first(live & (H[j] >= sl[j][:, None])) for j in (0, 1)])
+    if p.get("trig") == "index":
+        # leg stop = underlying index move of p["mv"] from its level at entry (minute open):
+        # CE stops when the index CLOSES >= S0*(1+mv), PE when it closes <= S0*(1-mv)
+        sc_, so_ = d["spot_close"], d["spot_open"]
+        S0 = so_[E]
+        up = sc_[None, :] >= (S0 * (1 + p["mv"]))[:, None]
+        dn = sc_[None, :] <= (S0 * (1 - p["mv"]))[:, None]
+        t = np.stack([_first(live & up), _first(live & dn)])
+        t = np.where(np.isfinite(S0)[None, :], t, N)
+    else:
+        t = np.stack([_first(live & (H[j] >= sl[j][:, None])) for j in (0, 1)])
     t1 = t.min(0)
     cm = p.get("cost")
     exit_t = t.copy()
@@ -127,7 +156,11 @@ def legs(d, E, p):
             other_first = t[1 - j] < t[j]                          # this leg is the survivor
             lvl = e[j] * cm
             t2 = _first(after & (H[j] >= lvl[:, None]))
-            use = other_first & (t2 <= t[j]) & (t2 < N)
+            if p.get("trig") == "index":
+                # the survivor's index stop is replaced by the cost stop
+                use = other_first
+            else:
+                use = other_first & (t2 <= t[j]) & (t2 < N)
             exit_t[j] = np.where(use, t2, t[j])
             stop_px[j] = np.where(use, lvl, stop_px[j])
     n = len(E)
